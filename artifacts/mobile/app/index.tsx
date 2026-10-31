@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line } from 'react-native-svg';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   ActivityIndicator,
   Dimensions,
   Platform,
@@ -14,27 +15,41 @@ import {
   View,
 } from 'react-native';
 import { useColors } from '@/hooks/useColors';
+import { PearlSumBoard, TidalSquareBoard } from '@/components/PuzzleBoards';
 import {
   BOARD_SIZE,
   Board,
   CellCoord,
+  CATALOGS,
+  CHANNEL_PUZZLES,
   PipeTile,
   PUZZLES,
   Puzzle,
+  PuzzleCatalog,
+  SquarePuzzle,
   connectorsFor,
   createBoard,
+  createSquareBoard,
+  getDailyPuzzle,
   getNextHintCell,
+  getNextSquareHintCell,
+  getSumHintSelection,
+  isSquareGridSolved,
+  isSumSolved,
   rotateBoardTile,
+  rotateSquareCell,
   traceCurrent,
 } from '@/lib/puzzles';
 import {
   EMPTY_PROGRESS,
   GameProgress,
+  getDailyStreak,
+  getLocalDateKey,
   readProgress,
   writeProgress,
 } from '@/lib/progress';
 
-type ScreenMode = 'home' | 'game';
+type ScreenMode = 'home' | 'catalog' | 'game';
 type LoadState = 'loading' | 'ready' | 'error';
 
 const iconCell = 60;
@@ -183,22 +198,59 @@ export default function TideglassScreen() {
   const [mode, setMode] = useState<ScreenMode>('home');
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [progress, setProgress] = useState<GameProgress>(EMPTY_PROGRESS);
-  const [activeId, setActiveId] = useState(PUZZLES[0].id);
-  const [board, setBoard] = useState<Board>(() => createBoard(PUZZLES[0]));
+  const [todayKey, setTodayKey] = useState(() => getLocalDateKey());
+  const [activeDailyDate, setActiveDailyDate] = useState<string | null>(null);
+  const [activeId, setActiveId] = useState(CHANNEL_PUZZLES[0].id);
+  const [activeCatalogId, setActiveCatalogId] = useState(CATALOGS[0].id);
+  const [board, setBoard] = useState<Board>(() => createBoard(CHANNEL_PUZZLES[0]));
+  const [sumSelection, setSumSelection] = useState<CellCoord[]>([]);
+  const [squareBoard, setSquareBoard] = useState<number[][]>(() =>
+    createSquareBoard(
+      PUZZLES.find((puzzle): puzzle is SquarePuzzle => puzzle.mode === 'squares')!,
+    ),
+  );
   const [moves, setMoves] = useState(0);
   const [won, setWon] = useState(false);
   const [saveNotice, setSaveNotice] = useState('');
   const hasWon = useRef(false);
 
   const activePuzzle =
-    PUZZLES.find((puzzle) => puzzle.id === activeId) ?? PUZZLES[0];
-  const flow = useMemo(() => traceCurrent(board, activePuzzle), [board, activePuzzle]);
+    PUZZLES.find((puzzle) => puzzle.id === activeId) ?? CHANNEL_PUZZLES[0];
+  const activeCatalog =
+    CATALOGS.find((catalog) => catalog.id === activeCatalogId) ?? CATALOGS[0];
+  const dailyPuzzle = useMemo(() => getDailyPuzzle(todayKey), [todayKey]);
+  const flow = useMemo(
+    () =>
+      activePuzzle.mode === 'channels'
+        ? traceCurrent(board, activePuzzle)
+        : { visited: new Set<string>(), connected: false },
+    [board, activePuzzle],
+  );
   const boardSize = Math.min(Dimensions.get('window').width - 40, 370);
   const cellSize = Math.floor((boardSize - 28 - 32) / BOARD_SIZE);
+  const dailyStreak = getDailyStreak(progress.dailyCompletedDates, todayKey);
+  const dailyCompletedToday = progress.dailyCompletedDates.includes(todayKey);
   const completedCount = progress.completed.filter((id) =>
     PUZZLES.some((puzzle) => puzzle.id === id),
   ).length;
-  const isComplete = progress.completed.length >= PUZZLES.length;
+
+  const refreshToday = useCallback(() => {
+    const currentDateKey = getLocalDateKey();
+    setTodayKey((storedDateKey) =>
+      storedDateKey === currentDateKey ? storedDateKey : currentDateKey,
+    );
+  }, []);
+
+  useEffect(() => {
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshToday();
+    });
+    const dayRefreshInterval = setInterval(refreshToday, 60_000);
+    return () => {
+      appStateSubscription.remove();
+      clearInterval(dayRefreshInterval);
+    };
+  }, [refreshToday]);
 
   const loadSavedProgress = useCallback(async () => {
     setLoadState('loading');
@@ -206,9 +258,10 @@ export default function TideglassScreen() {
       const stored = await readProgress();
       setProgress(stored);
       const nextPuzzle =
-        PUZZLES.find((puzzle) => !stored.completed.includes(puzzle.id)) ??
-        PUZZLES[0];
+        CHANNEL_PUZZLES.find((puzzle) => !stored.completed.includes(puzzle.id)) ??
+        CHANNEL_PUZZLES[0];
       setActiveId(nextPuzzle.id);
+      setActiveCatalogId(nextPuzzle.catalogId);
       setBoard(createBoard(nextPuzzle));
       setLoadState('ready');
     } catch {
@@ -220,10 +273,14 @@ export default function TideglassScreen() {
     void loadSavedProgress();
   }, [loadSavedProgress]);
 
-  const startPuzzle = (puzzle: Puzzle) => {
+  const startPuzzle = (puzzle: Puzzle, dailyDate?: string) => {
     hasWon.current = false;
+    setActiveDailyDate(dailyDate ?? null);
     setActiveId(puzzle.id);
-    setBoard(createBoard(puzzle));
+    setActiveCatalogId(puzzle.catalogId);
+    if (puzzle.mode === 'channels') setBoard(createBoard(puzzle));
+    if (puzzle.mode === 'sum') setSumSelection([]);
+    if (puzzle.mode === 'squares') setSquareBoard(createSquareBoard(puzzle));
     setMoves(0);
     setWon(false);
     setSaveNotice('');
@@ -250,6 +307,11 @@ export default function TideglassScreen() {
               ? finalMoves
               : Math.min(previousBest, finalMoves),
         },
+        dailyCompletedDates:
+          activeDailyDate &&
+          !progress.dailyCompletedDates.includes(activeDailyDate)
+            ? [...progress.dailyCompletedDates, activeDailyDate]
+            : progress.dailyCompletedDates,
       };
       setProgress(updated);
       setSaveNotice('');
@@ -259,10 +321,11 @@ export default function TideglassScreen() {
         setSaveNotice('This win is shown here, but could not be saved on this device.');
       }
     },
-    [activePuzzle.id, progress],
+    [activeDailyDate, activePuzzle.id, progress],
   );
 
   const turnTile = (row: number, column: number) => {
+    if (activePuzzle.mode !== 'channels') return;
     if (won || !board[row]?.[column]) return;
     const nextBoard = rotateBoardTile(board, row, column);
     const nextMoves = moves + 1;
@@ -275,31 +338,97 @@ export default function TideglassScreen() {
     }
   };
 
+  const selectSumCell = (row: number, column: number) => {
+    if (activePuzzle.mode !== 'sum' || won) return;
+    const alreadySelected = sumSelection.some(
+      ([selectedRow, selectedColumn]) =>
+        selectedRow === row && selectedColumn === column,
+    );
+    if (!alreadySelected && sumSelection.length >= activePuzzle.chooseCount) return;
+
+    const nextSelection = alreadySelected
+      ? sumSelection.filter(
+          ([selectedRow, selectedColumn]) =>
+            selectedRow !== row || selectedColumn !== column,
+        )
+      : [...sumSelection, [row, column] as CellCoord];
+    const nextMoves = moves + 1;
+    setSumSelection(nextSelection);
+    setMoves(nextMoves);
+    setSaveNotice('');
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isSumSolved(activePuzzle, nextSelection)) void completePuzzle(nextMoves);
+  };
+
+  const rotateSquare = (row: number, column: number) => {
+    if (activePuzzle.mode !== 'squares' || won) return;
+    const isFixed = activePuzzle.givens.some(
+      ([givenRow, givenColumn]) => givenRow === row && givenColumn === column,
+    );
+    if (isFixed) return;
+    const nextGrid = rotateSquareCell(squareBoard, row, column);
+    const nextMoves = moves + 1;
+    setSquareBoard(nextGrid);
+    setMoves(nextMoves);
+    setSaveNotice('');
+    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Light);
+    if (isSquareGridSolved(nextGrid)) void completePuzzle(nextMoves);
+  };
+
   const useHint = () => {
     if (won) return;
-    const hint = getNextHintCell(board, activePuzzle);
-    if (!hint) return;
-    const [row, column] = hint;
-    const tile = board[row][column];
-    if (!tile) return;
-    const cycle = tile.kind === 'straight' ? 2 : 4;
-    const turns = (tile.targetRotation - tile.rotation + cycle) % cycle;
-    let nextBoard = board;
-    for (let turn = 0; turn < turns; turn += 1) {
-      nextBoard = rotateBoardTile(nextBoard, row, column);
-    }
-    const nextMoves = moves + 1;
-    setBoard(nextBoard);
-    setMoves(nextMoves);
-    void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
-    if (traceCurrent(nextBoard, activePuzzle).connected) {
-      void completePuzzle(nextMoves);
+    if (activePuzzle.mode === 'channels') {
+      const hint = getNextHintCell(board, activePuzzle);
+      if (!hint) return;
+      const [row, column] = hint;
+      const tile = board[row][column];
+      if (!tile) return;
+      const cycle = tile.kind === 'straight' ? 2 : 4;
+      const turns = (tile.targetRotation - tile.rotation + cycle) % cycle;
+      let nextBoard = board;
+      for (let turn = 0; turn < turns; turn += 1) {
+        nextBoard = rotateBoardTile(nextBoard, row, column);
+      }
+      const nextMoves = moves + 1;
+      setBoard(nextBoard);
+      setMoves(nextMoves);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (traceCurrent(nextBoard, activePuzzle).connected) {
+        void completePuzzle(nextMoves);
+      }
+    } else if (activePuzzle.mode === 'sum') {
+      const nextSelection = getSumHintSelection(activePuzzle, sumSelection);
+      if (nextSelection.length === sumSelection.length &&
+          nextSelection.every((cell, index) =>
+            cell[0] === sumSelection[index]?.[0] &&
+            cell[1] === sumSelection[index]?.[1],
+          )) return;
+      const nextMoves = moves + 1;
+      setSumSelection(nextSelection);
+      setMoves(nextMoves);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (isSumSolved(activePuzzle, nextSelection)) {
+        void completePuzzle(nextMoves);
+      }
+    } else {
+      const hint = getNextSquareHintCell(squareBoard, activePuzzle);
+      if (!hint) return;
+      const [row, column] = hint;
+      const nextGrid = squareBoard.map((line) => [...line]);
+      nextGrid[row][column] = activePuzzle.solution[row][column];
+      const nextMoves = moves + 1;
+      setSquareBoard(nextGrid);
+      setMoves(nextMoves);
+      void Haptics.impactAsync(Haptics.ImpactFeedbackStyle.Medium);
+      if (isSquareGridSolved(nextGrid)) void completePuzzle(nextMoves);
     }
   };
 
   const resetPuzzle = () => {
     hasWon.current = false;
-    setBoard(createBoard(activePuzzle));
+    if (activePuzzle.mode === 'channels') setBoard(createBoard(activePuzzle));
+    if (activePuzzle.mode === 'sum') setSumSelection([]);
+    if (activePuzzle.mode === 'squares') setSquareBoard(createSquareBoard(activePuzzle));
     setMoves(0);
     setWon(false);
     setSaveNotice('');
@@ -307,10 +436,12 @@ export default function TideglassScreen() {
   };
 
   const nextPuzzle = () => {
-    const currentIndex = PUZZLES.findIndex((puzzle) => puzzle.id === activeId);
-    const next = PUZZLES[currentIndex + 1];
+    const currentIndex = activeCatalog.puzzles.findIndex(
+      (puzzle) => puzzle.id === activeId,
+    );
+    const next = activeCatalog.puzzles[currentIndex + 1];
     if (next) startPuzzle(next);
-    else setMode('home');
+    else setMode('catalog');
   };
 
   const safeTop = Platform.OS === 'web' ? 67 : insets.top + 8;
@@ -372,62 +503,87 @@ export default function TideglassScreen() {
             <Text style={styles.eyebrow}>A POCKET-SIZED LOGIC GAME</Text>
             <Text style={styles.heroTitle}>Find the way{'\n'}through.</Text>
             <Text style={styles.heroCopy}>
-              Turn the channels. Gather every shell. Let the current reach the pearl.
+              Trace a current, balance shell values, or arrange the tide marks.
             </Text>
           </View>
 
           <Pressable
-            testID="play-today"
+            testID="daily-challenge"
             accessibilityRole="button"
-            style={({ pressed }) => [styles.playCard, pressed && styles.pressed]}
-            onPress={() => startPuzzle(activePuzzle)}
+            accessibilityLabel={`Daily current, ${dailyPuzzle.title}, ${dailyStreak} day streak${dailyCompletedToday ? ', completed today' : ''}`}
+            style={({ pressed }) => [styles.dailyCard, pressed && styles.pressed]}
+            onPress={() => startPuzzle(dailyPuzzle, todayKey)}
           >
-            <View style={styles.playCardCopy}>
-              <Text style={styles.cardEyebrow}>{isComplete ? 'ALL MAPS OPEN' : 'YOUR NEXT MAP'}</Text>
-              <Text style={styles.playCardTitle}>
-                {isComplete ? 'Return to the tide' : activePuzzle.title}
-              </Text>
-              <Text style={styles.playCardSubtitle}>
-                {isComplete ? 'Replay a favorite current' : activePuzzle.description}
-              </Text>
+            <View style={styles.dailyCardTop}>
+              <View style={styles.dailyLabelGroup}>
+                <Feather name="droplet" size={14} color={colors.primary} />
+                <Text style={styles.dailyEyebrow}>DAILY PUZZLE</Text>
+              </View>
+              <View style={styles.streakPill}>
+                <Feather name="zap" size={12} color={colors.accent} />
+                <Text style={styles.streakPillText}>
+                  {dailyStreak > 0
+                    ? `${dailyStreak} DAY STREAK`
+                    : 'START A STREAK'}
+                </Text>
+              </View>
             </View>
-            <View style={styles.playButton}>
-              <Feather name="arrow-up-right" size={21} color={colors.primaryForeground} />
+            <Text style={styles.dailyDate}>{formatDateLabel(todayKey)}</Text>
+            <View style={styles.dailyCardBottom}>
+              <View style={styles.dailyCopy}>
+            <Text style={styles.dailyTitle}>{dailyPuzzle.title}</Text>
+                <Text style={styles.dailySubtitle}>
+                  {dailyCompletedToday
+                    ? 'Completed today · play again anytime'
+                    : dailyPuzzle.description}
+                </Text>
+              </View>
+              <View style={styles.dailyAction}>
+                <Feather
+                  name={dailyCompletedToday ? 'check' : 'arrow-up-right'}
+                  size={19}
+                  color={colors.primaryForeground}
+                />
+              </View>
             </View>
           </Pressable>
 
           <View style={styles.sectionHeading}>
             <View>
-              <Text style={styles.sectionTitle}>Tide maps</Text>
-              <Text style={styles.sectionSubtitle}>Three currents, each with its own route.</Text>
+              <Text style={styles.sectionTitle}>Puzzle catalogs</Text>
+              <Text style={styles.sectionSubtitle}>
+                Each collection plays by different rules.
+              </Text>
             </View>
-            <Feather name="map" size={18} color={colors.mutedForeground} />
+            <Feather name="layers" size={18} color={colors.mutedForeground} />
           </View>
 
-          <View style={styles.levelList}>
-            {PUZZLES.map((puzzle, index) => {
-              const done = progress.completed.includes(puzzle.id);
-              const best = progress.bestMoves[puzzle.id];
+          <View style={styles.catalogList}>
+            {CATALOGS.map((catalog) => {
+              const done = catalog.puzzles.filter((puzzle) =>
+                progress.completed.includes(puzzle.id),
+              ).length;
+              const accent = getCatalogAccent(catalog, colors);
               return (
                 <Pressable
-                  key={puzzle.id}
-                  testID={`map-${puzzle.id}`}
+                  key={catalog.id}
+                  testID={`catalog-${catalog.id}`}
                   accessibilityRole="button"
-                  accessibilityLabel={`Play ${puzzle.title}${done ? ', completed' : ''}`}
-                  onPress={() => startPuzzle(puzzle)}
-                  style={({ pressed }) => [styles.levelRow, pressed && styles.pressed]}
+                  accessibilityLabel={`Open ${catalog.title}, ${done} of ${catalog.puzzles.length} completed`}
+                  onPress={() => {
+                    setActiveCatalogId(catalog.id);
+                    setMode('catalog');
+                  }}
+                  style={({ pressed }) => [styles.catalogCard, pressed && styles.pressed]}
                 >
-                  <View style={[styles.levelIndex, done && styles.levelIndexDone]}>
-                    {done ? (
-                      <Feather name="check" size={16} color={colors.primaryForeground} />
-                    ) : (
-                      <Text style={styles.levelIndexText}>0{index + 1}</Text>
-                    )}
+                  <View style={[styles.catalogIcon, { borderColor: accent }]}>
+                    <Feather name={catalog.icon} size={19} color={accent} />
                   </View>
-                  <View style={styles.levelCopy}>
-                    <Text style={styles.levelTitle}>{puzzle.title}</Text>
-                    <Text style={styles.levelSubtitle}>
-                      {best ? `Best · ${best} turns` : puzzle.description}
+                  <View style={styles.catalogCardCopy}>
+                    <Text style={styles.catalogCardTitle}>{catalog.title}</Text>
+                    <Text style={styles.catalogCardDescription}>{catalog.description}</Text>
+                    <Text style={[styles.catalogCardMeta, { color: accent }]}>
+                      {catalog.puzzles.length} puzzles · {done} completed
                     </Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
@@ -437,84 +593,259 @@ export default function TideglassScreen() {
           </View>
           <Text style={styles.footerNote}>Made for a slower moment.</Text>
         </ScrollView>
+      ) : mode === 'catalog' ? (
+        <ScrollView
+          contentContainerStyle={styles.catalogContent}
+          showsVerticalScrollIndicator={false}
+        >
+          <View style={styles.catalogNav}>
+            <IconButton
+              name="arrow-left"
+              label="Back to puzzle catalogs"
+              colors={colors}
+              onPress={() => setMode('home')}
+            />
+            <Text style={styles.catalogNavLabel}>COLLECTION</Text>
+            <View style={{ width: 42 }} />
+          </View>
+
+          <View style={styles.catalogIntro}>
+            <View
+              style={[
+                styles.catalogDetailIcon,
+                { borderColor: getCatalogAccent(activeCatalog, colors) },
+              ]}
+            >
+              <Feather
+                name={activeCatalog.icon}
+                size={24}
+                color={getCatalogAccent(activeCatalog, colors)}
+              />
+            </View>
+            <Text
+              style={[
+                styles.catalogKicker,
+                { color: getCatalogAccent(activeCatalog, colors) },
+              ]}
+            >
+              {activeCatalog.puzzles.length} PUZZLES · ONE DISTINCT RULESET
+            </Text>
+            <Text style={styles.catalogTitle}>{activeCatalog.title}</Text>
+            <Text style={styles.catalogDescription}>{activeCatalog.description}</Text>
+            <View
+              style={[
+                styles.mechanicNote,
+                { borderColor: getCatalogAccent(activeCatalog, colors) },
+              ]}
+            >
+              <Text
+                style={[
+                  styles.mechanicNoteText,
+                  { color: getCatalogAccent(activeCatalog, colors) },
+                ]}
+              >
+                {activeCatalog.mechanic}
+              </Text>
+            </View>
+          </View>
+
+          <View style={styles.sectionHeading}>
+            <View>
+              <Text style={styles.sectionTitle}>Choose a puzzle</Text>
+              <Text style={styles.sectionSubtitle}>
+                {activeCatalog.puzzles.filter((puzzle) =>
+                  progress.completed.includes(puzzle.id),
+                ).length}{' '}
+                of {activeCatalog.puzzles.length} completed
+              </Text>
+            </View>
+            <Feather name="list" size={18} color={colors.mutedForeground} />
+          </View>
+
+          <View style={styles.levelList}>
+            {activeCatalog.puzzles.map((puzzle, index) => {
+              const done = progress.completed.includes(puzzle.id);
+              const best = progress.bestMoves[puzzle.id];
+              return (
+                <Pressable
+                  key={puzzle.id}
+                  testID={`puzzle-${puzzle.id}`}
+                  accessibilityRole="button"
+                  accessibilityLabel={`Play ${puzzle.title}${done ? ', completed' : ''}`}
+                  onPress={() => startPuzzle(puzzle)}
+                  style={({ pressed }) => [styles.levelRow, pressed && styles.pressed]}
+                >
+                  <View
+                    style={[
+                      styles.levelIndex,
+                      done && {
+                        backgroundColor: getCatalogAccent(activeCatalog, colors),
+                      },
+                    ]}
+                  >
+                    {done ? (
+                      <Feather
+                        name="check"
+                        size={16}
+                        color={activeCatalog.accent === 'accent'
+                          ? colors.accentForeground
+                          : colors.primaryForeground}
+                      />
+                    ) : (
+                      <Text style={styles.levelIndexText}>
+                        {String(index + 1).padStart(2, '0')}
+                      </Text>
+                    )}
+                  </View>
+                  <View style={styles.levelCopy}>
+                    <Text style={styles.levelTitle}>{puzzle.title}</Text>
+                    <Text style={styles.levelSubtitle}>
+                      {[
+                        done ? 'Completed' : null,
+                        best !== undefined ? `Best · ${best} moves` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || puzzle.description}
+                    </Text>
+                  </View>
+                  <Feather
+                    name="chevron-right"
+                    size={18}
+                    color={colors.mutedForeground}
+                  />
+                </Pressable>
+              );
+            })}
+          </View>
+        </ScrollView>
       ) : (
         <View style={styles.gameContent}>
           <View style={styles.gameHeader}>
             <IconButton
               name="arrow-left"
-              label="Back to tide maps"
+              label={`Back to ${activeCatalog.title}`}
               colors={colors}
-              onPress={() => setMode('home')}
+              onPress={() => setMode('catalog')}
             />
             <View style={styles.gameTitleWrap}>
-              <Text style={styles.gameKicker}>MAP {String(PUZZLES.indexOf(activePuzzle) + 1).padStart(2, '0')}</Text>
+              <Text style={styles.gameKicker}>
+                {activeDailyDate
+                  ? 'DAILY PUZZLE'
+                  : activeCatalog.title.toUpperCase()}
+              </Text>
               <Text style={styles.gameTitle}>{activePuzzle.title}</Text>
             </View>
             <View style={styles.turnBadge}>
               <Text style={styles.turnNumber}>{moves}</Text>
-              <Text style={styles.turnLabel}>TURNS</Text>
+              <Text style={styles.turnLabel}>MOVES</Text>
             </View>
           </View>
 
           <View style={styles.instructionBlock}>
-            <Text style={styles.instructionTitle}>Guide the current</Text>
+            <Text style={styles.instructionTitle}>
+              {activePuzzle.mode === 'channels'
+                ? 'Guide the current'
+                : activePuzzle.mode === 'sum'
+                  ? `Reach ${activePuzzle.target}`
+                  : 'Set the tide marks'}
+            </Text>
             <Text style={styles.instructionCopy}>
-              Turn each channel to carry water from the spring through every shell to the pearl.
+              {activePuzzle.mode === 'channels'
+                ? 'Turn channels to carry water from the spring through every shell to the pearl.'
+                : activePuzzle.mode === 'sum'
+                  ? `Choose exactly ${activePuzzle.chooseCount} shells whose values add to ${activePuzzle.target}.`
+                  : 'Each row and column must contain one of each mark. Tap a tile to cycle it.'}
             </Text>
           </View>
 
-          <View style={[styles.boardFrame, { width: boardSize, height: boardSize }]}>
-            {board.map((rowTiles, row) => (
-              <View key={`row-${row}`} style={styles.boardRow}>
-                {rowTiles.map((tile, column) => {
-                  const isShell = activePuzzle.shells.some(
-                    ([shellRow, shellColumn]) => shellRow === row && shellColumn === column,
-                  );
-                  return (
-                    <GameCell
-                      key={`${row}-${column}`}
-                      tile={tile}
-                      row={row}
-                      column={column}
-                      size={cellSize}
-                      isFlowing={flow.visited.has(`${row},${column}`)}
-                      isShell={isShell}
-                      isSource={row === 2 && column === 0}
-                      isPearl={row === 2 && column === BOARD_SIZE - 1}
-                      colors={colors}
-                      onPress={() => turnTile(row, column)}
-                    />
-                  );
-                })}
+          {activePuzzle.mode === 'channels' ? (
+            <>
+              <View style={[styles.boardFrame, { width: boardSize, height: boardSize }]}>
+                {board.map((rowTiles, row) => (
+                  <View key={`row-${row}`} style={styles.boardRow}>
+                    {rowTiles.map((tile, column) => {
+                      const isShell = activePuzzle.shells.some(
+                        ([shellRow, shellColumn]) =>
+                          shellRow === row && shellColumn === column,
+                      );
+                      return (
+                        <GameCell
+                          key={`${row}-${column}`}
+                          tile={tile}
+                          row={row}
+                          column={column}
+                          size={cellSize}
+                          isFlowing={flow.visited.has(`${row},${column}`)}
+                          isShell={isShell}
+                          isSource={row === 2 && column === 0}
+                          isPearl={row === 2 && column === BOARD_SIZE - 1}
+                          colors={colors}
+                          onPress={() => turnTile(row, column)}
+                        />
+                      );
+                    })}
+                  </View>
+                ))}
               </View>
-            ))}
-          </View>
-
-          <View style={styles.legendRow}>
-            <View style={styles.legendItem}>
-              <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
-              <Text style={styles.legendText}>{activePuzzle.shells.length} shells</Text>
-            </View>
-            <View style={styles.legendItem}>
-              <Feather name="rotate-cw" size={13} color={colors.mutedForeground} />
-              <Text style={styles.legendText}>Tap a channel to turn it</Text>
-            </View>
-          </View>
+              <View style={styles.legendRow}>
+                <View style={styles.legendItem}>
+                  <View style={[styles.legendDot, { backgroundColor: colors.primary }]} />
+                  <Text style={styles.legendText}>
+                    {activePuzzle.shells.length} shells to collect
+                  </Text>
+                </View>
+                <View style={styles.legendItem}>
+                  <Feather name="rotate-cw" size={13} color={colors.mutedForeground} />
+                  <Text style={styles.legendText}>Tap to turn a channel</Text>
+                </View>
+              </View>
+            </>
+          ) : activePuzzle.mode === 'sum' ? (
+            <PearlSumBoard
+              puzzle={activePuzzle}
+              selected={sumSelection}
+              colors={colors}
+              boardWidth={boardSize}
+              onToggle={selectSumCell}
+            />
+          ) : (
+            <TidalSquareBoard
+              puzzle={activePuzzle}
+              grid={squareBoard}
+              colors={colors}
+              boardWidth={boardSize}
+              onRotate={rotateSquare}
+            />
+          )}
 
           {won ? (
             <View style={styles.winPanel}>
               <View style={styles.winIcon}>
-                <Feather name="sun" size={20} color={colors.primaryForeground} />
+                <Feather
+                  name={activePuzzle.mode === 'channels' ? 'sun' : activePuzzle.mode === 'sum' ? 'hash' : 'grid'}
+                  size={20}
+                  color={colors.primaryForeground}
+                />
               </View>
               <View style={styles.winCopy}>
-                <Text style={styles.winTitle}>The current found its way.</Text>
+                <Text style={styles.winTitle}>
+                  {activePuzzle.mode === 'channels'
+                    ? 'The current found its way.'
+                    : activePuzzle.mode === 'sum'
+                      ? 'The pearl count is balanced.'
+                      : 'The tide marks are in harmony.'}
+                </Text>
                 <Text style={styles.winSubtitle}>
-                  {moves} {moves === 1 ? 'turn' : 'turns'} · your best is {progress.bestMoves[activePuzzle.id] ?? moves}
+                  {moves} {moves === 1 ? 'move' : 'moves'} · best {progress.bestMoves[activePuzzle.id] ?? moves}
                 </Text>
               </View>
               <Pressable
                 accessibilityRole="button"
-                accessibilityLabel={PUZZLES.indexOf(activePuzzle) < PUZZLES.length - 1 ? 'Continue to next map' : 'Return to maps'}
+                accessibilityLabel={
+                  activeCatalog.puzzles[activeCatalog.puzzles.length - 1]?.id === activePuzzle.id
+                    ? 'Return to catalog'
+                    : 'Continue to next puzzle'
+                }
                 onPress={nextPuzzle}
                 style={styles.winContinue}
               >
@@ -530,7 +861,13 @@ export default function TideglassScreen() {
                 style={({ pressed }) => [styles.secondaryButton, pressed && styles.pressed]}
               >
                 <Feather name="sun" size={16} color={colors.accent} />
-                <Text style={styles.secondaryButtonText}>Nudge a channel</Text>
+                <Text style={styles.secondaryButtonText}>
+                  {activePuzzle.mode === 'channels'
+                    ? 'Nudge a channel'
+                    : activePuzzle.mode === 'sum'
+                      ? 'Reveal a shell'
+                      : 'Reveal a mark'}
+                </Text>
               </Pressable>
               <Pressable
                 accessibilityRole="button"
@@ -544,12 +881,36 @@ export default function TideglassScreen() {
           )}
           {saveNotice ? <Text style={styles.saveNotice}>{saveNotice}</Text> : null}
           <Text style={styles.smallHint}>
-            A lit channel shows where the water can travel.
+            {activePuzzle.mode === 'channels'
+              ? 'A lit channel shows where the water can travel.'
+              : activePuzzle.mode === 'sum'
+                ? 'Tap a shell to add or remove it from your sum.'
+                : 'Clue tiles are locked. Tap another mark to rotate it.'}
           </Text>
         </View>
       )}
     </View>
   );
+}
+
+function getCatalogAccent(
+  catalog: PuzzleCatalog,
+  colors: ReturnType<typeof useColors>,
+): string {
+  if (catalog.accent === 'accent') return colors.accent;
+  if (catalog.accent === 'moonlit') return colors.moonlit;
+  return colors.primary;
+}
+
+function formatDateLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day)
+    .toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+    .toUpperCase();
 }
 
 function makeStyles(colors: ReturnType<typeof useColors>) {
@@ -566,6 +927,65 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
     loadingText: { color: colors.mutedForeground, fontSize: 15 },
     loadingTitle: { color: colors.foreground, fontSize: 20, fontWeight: '700' },
     homeContent: { paddingHorizontal: 22, paddingBottom: 28 },
+    catalogContent: { paddingHorizontal: 22, paddingBottom: 28 },
+    catalogNav: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    catalogNavLabel: {
+      color: colors.mutedForeground,
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 1.8,
+    },
+    catalogIntro: { alignItems: 'center', paddingTop: 18, paddingBottom: 5 },
+    catalogDetailIcon: {
+      width: 64,
+      height: 64,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 22,
+      borderWidth: 1,
+      backgroundColor: colors.card,
+      marginBottom: 14,
+    },
+    catalogKicker: {
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 1.7,
+    },
+    catalogTitle: {
+      color: colors.foreground,
+      fontSize: 30,
+      fontWeight: '700',
+      letterSpacing: -0.5,
+      textAlign: 'center',
+      marginTop: 5,
+    },
+    catalogDescription: {
+      color: colors.mutedForeground,
+      fontSize: 13,
+      lineHeight: 19,
+      textAlign: 'center',
+      maxWidth: 300,
+      marginTop: 7,
+    },
+    mechanicNote: {
+      width: '100%',
+      paddingHorizontal: 14,
+      paddingVertical: 12,
+      marginTop: 15,
+      borderRadius: 15,
+      borderWidth: 1,
+      backgroundColor: colors.card,
+    },
+    mechanicNoteText: {
+      fontSize: 12,
+      fontWeight: '600',
+      lineHeight: 17,
+      textAlign: 'center',
+    },
     topBar: {
       flexDirection: 'row',
       alignItems: 'center',
@@ -660,6 +1080,64 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
       maxWidth: 290,
       marginTop: 10,
     },
+    dailyCard: {
+      padding: 18,
+      borderRadius: 22,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    dailyCardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dailyLabelGroup: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    dailyEyebrow: {
+      color: colors.primary,
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+    },
+    streakPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      borderRadius: 14,
+      backgroundColor: colors.secondary,
+    },
+    streakPillText: {
+      color: colors.foreground,
+      fontSize: 8,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+    },
+    dailyDate: {
+      color: colors.mutedForeground,
+      fontSize: 8,
+      fontWeight: '600',
+      letterSpacing: 1.1,
+      marginTop: 13,
+      marginBottom: 7,
+    },
+    dailyCardBottom: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dailyCopy: { flex: 1, paddingRight: 12 },
+    dailyTitle: { color: colors.foreground, fontSize: 21, fontWeight: '700' },
+    dailySubtitle: { color: colors.mutedForeground, fontSize: 11, marginTop: 4 },
+    dailyAction: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      backgroundColor: colors.primary,
+    },
     playCard: {
       minHeight: 104,
       flexDirection: 'row',
@@ -671,6 +1149,7 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
       borderWidth: 1,
       borderColor: colors.border,
     },
+    nextMapCard: { marginTop: 10 },
     playCardCopy: { flex: 1, paddingRight: 10 },
     cardEyebrow: {
       color: colors.primary,
@@ -698,6 +1177,41 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
     },
     sectionTitle: { color: colors.foreground, fontSize: 18, fontWeight: '700' },
     sectionSubtitle: { color: colors.mutedForeground, fontSize: 11, marginTop: 4 },
+    catalogList: { gap: 10 },
+    catalogCard: {
+      minHeight: 100,
+      flexDirection: 'row',
+      alignItems: 'center',
+      padding: 14,
+      borderRadius: 20,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    catalogIcon: {
+      width: 46,
+      height: 46,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 16,
+      borderWidth: 1,
+      backgroundColor: colors.secondary,
+      marginRight: 12,
+    },
+    catalogCardCopy: { flex: 1, paddingRight: 8 },
+    catalogCardTitle: { color: colors.foreground, fontSize: 15, fontWeight: '700' },
+    catalogCardDescription: {
+      color: colors.mutedForeground,
+      fontSize: 10,
+      lineHeight: 15,
+      marginTop: 3,
+    },
+    catalogCardMeta: {
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 0.3,
+      marginTop: 6,
+    },
     levelList: {
       borderRadius: 20,
       paddingHorizontal: 14,

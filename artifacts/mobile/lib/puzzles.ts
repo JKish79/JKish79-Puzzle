@@ -11,21 +11,58 @@ export type PipeTile = {
 
 export type Board = (PipeTile | null)[][];
 
-export type Puzzle = {
+export type CatalogId = 'channels' | 'pearl-sums' | 'tidal-squares';
+export type CatalogAccent = 'primary' | 'accent' | 'moonlit';
+export type PuzzleMode = 'channels' | 'sum' | 'squares';
+
+type PuzzleBase = {
   id: string;
   title: string;
   description: string;
+  catalogId: CatalogId;
+};
+
+export type ChannelPuzzle = PuzzleBase & {
+  mode: 'channels';
   route: CellCoord[];
   shells: CellCoord[];
 };
 
+export type SumPuzzle = PuzzleBase & {
+  mode: 'sum';
+  values: number[][];
+  target: number;
+  chooseCount: number;
+  solution: CellCoord[];
+};
+
+export type SquarePuzzle = PuzzleBase & {
+  mode: 'squares';
+  solution: number[][];
+  givens: CellCoord[];
+};
+
+export type Puzzle = ChannelPuzzle | SumPuzzle | SquarePuzzle;
+
+export type PuzzleCatalog = {
+  id: CatalogId;
+  title: string;
+  description: string;
+  mechanic: string;
+  icon: 'git-branch' | 'hash' | 'grid';
+  accent: CatalogAccent;
+  puzzles: Puzzle[];
+};
+
 export const BOARD_SIZE = 5;
 
-export const PUZZLES: Puzzle[] = [
+export const CHANNEL_PUZZLES: ChannelPuzzle[] = [
   {
     id: 'low-tide',
     title: 'Low Tide',
     description: 'A quiet path through the shallows.',
+    catalogId: 'channels',
+    mode: 'channels',
     route: [
       [2, 0],
       [1, 0],
@@ -44,6 +81,8 @@ export const PUZZLES: Puzzle[] = [
     id: 'blue-hour',
     title: 'Blue Hour',
     description: 'The current bends beneath the reef.',
+    catalogId: 'channels',
+    mode: 'channels',
     route: [
       [2, 0],
       [3, 0],
@@ -62,6 +101,8 @@ export const PUZZLES: Puzzle[] = [
     id: 'coral-thread',
     title: 'Coral Thread',
     description: 'Follow the long way around.',
+    catalogId: 'channels',
+    mode: 'channels',
     route: [
       [2, 0],
       [1, 0],
@@ -79,7 +120,358 @@ export const PUZZLES: Puzzle[] = [
       [2, 3],
     ],
   },
+  {
+    id: 'saltglass-bend',
+    title: 'Saltglass Bend',
+    description: 'A bright turn through the shallows.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [1, 0],
+      [1, 1],
+      [1, 2],
+      [2, 2],
+      [3, 2],
+      [3, 3],
+      [3, 4],
+      [2, 4],
+    ],
+    shells: [
+      [1, 1],
+      [2, 2],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'moon-pool',
+    title: 'Moon Pool',
+    description: 'Let the current curl around the reef.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [3, 0],
+      [3, 1],
+      [2, 1],
+      [1, 1],
+      [1, 2],
+      [1, 3],
+      [2, 3],
+      [2, 4],
+    ],
+    shells: [
+      [3, 1],
+      [1, 1],
+      [1, 3],
+    ],
+  },
+  {
+    id: 'kelp-cathedral',
+    title: 'Kelp Cathedral',
+    description: 'Thread the tall reef and its hidden turns.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [1, 0],
+      [0, 0],
+      [0, 1],
+      [0, 2],
+      [1, 2],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+      [3, 2],
+      [4, 2],
+      [4, 3],
+      [4, 4],
+      [3, 4],
+      [2, 4],
+    ],
+    shells: [
+      [0, 1],
+      [1, 2],
+      [3, 2],
+      [4, 3],
+    ],
+  },
+  {
+    id: 'lantern-reach',
+    title: 'Lantern Reach',
+    description: 'A winding route beneath the evening lights.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [4, 1],
+      [3, 1],
+      [2, 1],
+      [1, 1],
+      [1, 2],
+      [2, 2],
+      [3, 2],
+      [3, 3],
+      [2, 3],
+      [1, 3],
+      [1, 4],
+      [2, 4],
+    ],
+    shells: [
+      [4, 1],
+      [2, 1],
+      [1, 2],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'deepglass-channel',
+    title: 'Deepglass Channel',
+    description: 'Carry five shells through the deep channels.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [1, 0],
+      [0, 0],
+      [0, 1],
+      [1, 1],
+      [2, 1],
+      [2, 2],
+      [1, 2],
+      [0, 2],
+      [0, 3],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+      [3, 4],
+      [2, 4],
+    ],
+    shells: [
+      [0, 1],
+      [2, 1],
+      [0, 2],
+      [2, 3],
+      [3, 4],
+    ],
+  },
+  {
+    id: 'blue-lanterns',
+    title: 'Blue Lanterns',
+    description: 'A final, twisting passage through the reef.',
+    catalogId: 'channels',
+    mode: 'channels',
+    route: [
+      [2, 0],
+      [3, 0],
+      [4, 0],
+      [4, 1],
+      [4, 2],
+      [3, 2],
+      [2, 2],
+      [1, 2],
+      [1, 1],
+      [0, 1],
+      [0, 2],
+      [0, 3],
+      [1, 3],
+      [2, 3],
+      [3, 3],
+      [3, 4],
+      [2, 4],
+    ],
+    shells: [
+      [4, 1],
+      [3, 2],
+      [1, 2],
+      [0, 2],
+      [2, 3],
+    ],
+  },
 ];
+
+export const SUM_PUZZLES: SumPuzzle[] = [
+  {
+    id: 'three-shells',
+    title: 'Three Shells',
+    description: 'Choose three shell values to make 17.',
+    catalogId: 'pearl-sums',
+    mode: 'sum',
+    values: [
+      [2, 4, 9, 6],
+      [7, 3, 8, 1],
+      [5, 6, 4, 9],
+      [3, 7, 2, 5],
+    ],
+    target: 17,
+    chooseCount: 3,
+    solution: [
+      [0, 1],
+      [1, 2],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'evening-tally',
+    title: 'Evening Tally',
+    description: 'Pick three pearls that add up to 18.',
+    catalogId: 'pearl-sums',
+    mode: 'sum',
+    values: [
+      [6, 9, 3, 7],
+      [8, 5, 4, 2],
+      [1, 6, 8, 3],
+      [5, 7, 2, 9],
+    ],
+    target: 18,
+    chooseCount: 3,
+    solution: [
+      [0, 2],
+      [2, 1],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'deep-reserve',
+    title: 'Deep Reserve',
+    description: 'Find four stones whose total is 28.',
+    catalogId: 'pearl-sums',
+    mode: 'sum',
+    values: [
+      [4, 6, 3, 8],
+      [8, 2, 7, 5],
+      [1, 5, 9, 3],
+      [7, 4, 6, 7],
+    ],
+    target: 28,
+    chooseCount: 4,
+    solution: [
+      [1, 0],
+      [2, 2],
+      [3, 1],
+      [3, 3],
+    ],
+  },
+];
+
+export const SQUARE_PUZZLES: SquarePuzzle[] = [
+  {
+    id: 'first-light',
+    title: 'First Light',
+    description: 'Give each row and column four different tide marks.',
+    catalogId: 'tidal-squares',
+    mode: 'squares',
+    solution: [
+      [0, 1, 2, 3],
+      [1, 2, 3, 0],
+      [2, 3, 0, 1],
+      [3, 0, 1, 2],
+    ],
+    givens: [
+      [0, 0],
+      [0, 3],
+      [1, 1],
+      [1, 2],
+      [2, 0],
+      [2, 2],
+      [3, 1],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'silver-water',
+    title: 'Silver Water',
+    description: 'Arrange the four marks without repeating a line.',
+    catalogId: 'tidal-squares',
+    mode: 'squares',
+    solution: [
+      [0, 2, 1, 3],
+      [1, 3, 0, 2],
+      [2, 0, 3, 1],
+      [3, 1, 2, 0],
+    ],
+    givens: [
+      [0, 1],
+      [0, 2],
+      [1, 0],
+      [1, 3],
+      [2, 1],
+      [2, 2],
+      [3, 0],
+      [3, 3],
+    ],
+  },
+  {
+    id: 'moon-garden',
+    title: 'Moon Garden',
+    description: 'Complete the square with one of each mark per line.',
+    catalogId: 'tidal-squares',
+    mode: 'squares',
+    solution: [
+      [3, 1, 0, 2],
+      [0, 2, 3, 1],
+      [1, 3, 2, 0],
+      [2, 0, 1, 3],
+    ],
+    givens: [
+      [0, 0],
+      [0, 2],
+      [1, 1],
+      [1, 3],
+      [2, 0],
+      [2, 3],
+      [3, 1],
+      [3, 2],
+    ],
+  },
+];
+
+export const CATALOGS: PuzzleCatalog[] = [
+  {
+    id: 'channels',
+    title: 'Channel Craft',
+    description: 'A pathfinding puzzle played with turning water channels.',
+    mechanic: 'Turn pipes to carry a current from spring to pearl.',
+    icon: 'git-branch',
+    accent: 'primary',
+    puzzles: CHANNEL_PUZZLES,
+  },
+  {
+    id: 'pearl-sums',
+    title: 'Pearl Sums',
+    description: 'A number-combination puzzle about balancing shell values.',
+    mechanic: 'Pick a precise set of shells to reach the target sum.',
+    icon: 'hash',
+    accent: 'accent',
+    puzzles: SUM_PUZZLES,
+  },
+  {
+    id: 'tidal-squares',
+    title: 'Tidal Squares',
+    description: 'A pattern-logic puzzle about arranging four tide marks.',
+    mechanic: 'Make every row and column contain four unique marks.',
+    icon: 'grid',
+    accent: 'moonlit',
+    puzzles: SQUARE_PUZZLES,
+  },
+];
+
+export const PUZZLES: Puzzle[] = CATALOGS.flatMap((catalog) => catalog.puzzles);
+
+export function getDailyPuzzle(dateKey: string): Puzzle {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    throw new Error('A daily puzzle requires a date in YYYY-MM-DD format.');
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < dateKey.length; index += 1) {
+    hash = Math.imul(hash ^ dateKey.charCodeAt(index), 16777619);
+  }
+
+  return PUZZLES[(hash >>> 0) % PUZZLES.length];
+}
 
 const DIRECTIONS: Direction[] = ['N', 'E', 'S', 'W'];
 const DELTAS: Record<Direction, CellCoord> = {
@@ -131,7 +523,7 @@ function rotationFor(connectors: Direction[], kind: TileKind): number {
   return 0;
 }
 
-export function createBoard(puzzle: Puzzle, scrambled = true): Board {
+export function createBoard(puzzle: ChannelPuzzle, scrambled = true): Board {
   const board: Board = Array.from({ length: BOARD_SIZE }, () =>
     Array.from({ length: BOARD_SIZE }, () => null),
   );
@@ -180,7 +572,7 @@ export function rotateBoardTile(
   return next;
 }
 
-export function traceCurrent(board: Board, puzzle: Puzzle) {
+export function traceCurrent(board: Board, puzzle: ChannelPuzzle) {
   const visited = new Set<string>();
   let row = 2;
   let column = 0;
@@ -224,11 +616,96 @@ export function traceCurrent(board: Board, puzzle: Puzzle) {
 
 export function getNextHintCell(
   board: Board,
-  puzzle: Puzzle,
+  puzzle: ChannelPuzzle,
 ): CellCoord | null {
   for (const [row, column] of puzzle.route) {
     const tile = board[row]?.[column];
     if (tile && tile.rotation !== tile.targetRotation) return [row, column];
   }
   return null;
+}
+
+export function createSquareBoard(puzzle: SquarePuzzle): number[][] {
+  const givenKeys = new Set(puzzle.givens.map(([row, column]) => `${row},${column}`));
+  return puzzle.solution.map((line, row) =>
+    line.map((value, column) =>
+      givenKeys.has(`${row},${column}`)
+        ? value
+        : (value + ((row + column) % 3) + 1) % 4,
+    ),
+  );
+}
+
+export function rotateSquareCell(
+  board: number[][],
+  row: number,
+  column: number,
+): number[][] {
+  return board.map((line, currentRow) =>
+    line.map((value, currentColumn) =>
+      currentRow === row && currentColumn === column ? (value + 1) % 4 : value,
+    ),
+  );
+}
+
+export function isSquareGridSolved(board: number[][]): boolean {
+  const expected = new Set([0, 1, 2, 3]);
+  const rowsSolved = board.every(
+    (row) => row.length === 4 && new Set(row).size === expected.size,
+  );
+  const columnsSolved = expected.size === board.length &&
+    [...expected].every((_, column) => {
+      const values = board.map((row) => row[column]);
+      return values.length === 4 && new Set(values).size === expected.size;
+    });
+  return rowsSolved && columnsSolved;
+}
+
+export function getNextSquareHintCell(
+  board: number[][],
+  puzzle: SquarePuzzle,
+): CellCoord | null {
+  const givenKeys = new Set(puzzle.givens.map(([row, column]) => `${row},${column}`));
+  for (let row = 0; row < puzzle.solution.length; row += 1) {
+    for (let column = 0; column < puzzle.solution[row].length; column += 1) {
+      if (
+        !givenKeys.has(`${row},${column}`) &&
+        board[row][column] !== puzzle.solution[row][column]
+      ) {
+        return [row, column];
+      }
+    }
+  }
+  return null;
+}
+
+export function sumSelected(
+  puzzle: SumPuzzle,
+  selected: readonly CellCoord[],
+): number {
+  return selected.reduce(
+    (total, [row, column]) => total + (puzzle.values[row]?.[column] ?? 0),
+    0,
+  );
+}
+
+export function isSumSolved(
+  puzzle: SumPuzzle,
+  selected: readonly CellCoord[],
+): boolean {
+  return selected.length === puzzle.chooseCount && sumSelected(puzzle, selected) === puzzle.target;
+}
+
+export function getSumHintSelection(
+  puzzle: SumPuzzle,
+  selected: readonly CellCoord[],
+): CellCoord[] {
+  const solutionKeys = new Set(puzzle.solution.map(([row, column]) => `${row},${column}`));
+  const retained = selected.filter(([row, column]) => solutionKeys.has(`${row},${column}`));
+  const nextSolutionCell = puzzle.solution.find(
+    ([row, column]) => !retained.some(([selectedRow, selectedColumn]) =>
+      selectedRow === row && selectedColumn === column,
+    ),
+  );
+  return nextSolutionCell ? [...retained, nextSolutionCell] : [...retained];
 }
