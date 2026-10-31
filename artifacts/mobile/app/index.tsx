@@ -399,7 +399,9 @@ export default function TideglassScreen() {
           <View style={styles.sectionHeading}>
             <View>
               <Text style={styles.sectionTitle}>Tide maps</Text>
-              <Text style={styles.sectionSubtitle}>Three currents, each with its own route.</Text>
+              <Text style={styles.sectionSubtitle}>
+                {PUZZLES.length} currents, each with its own route.
+              </Text>
             </View>
             <Feather name="map" size={18} color={colors.mutedForeground} />
           </View>
@@ -413,7 +415,7 @@ export default function TideglassScreen() {
                   key={puzzle.id}
                   testID={`map-${puzzle.id}`}
                   accessibilityRole="button"
-                  accessibilityLabel={`Play ${puzzle.title}${done ? ', completed' : ''}`}
+                  accessibilityLabel={`Play ${puzzle.title}${done ? ', completed' : ''}${best !== undefined ? `, best ${best} ${best === 1 ? 'turn' : 'turns'}` : ''}`}
                   onPress={() => startPuzzle(puzzle)}
                   style={({ pressed }) => [styles.levelRow, pressed && styles.pressed]}
                 >
@@ -427,7 +429,14 @@ export default function TideglassScreen() {
                   <View style={styles.levelCopy}>
                     <Text style={styles.levelTitle}>{puzzle.title}</Text>
                     <Text style={styles.levelSubtitle}>
-                      {best ? `Best · ${best} turns` : puzzle.description}
+                      {[
+                        done ? 'Completed' : null,
+                        best !== undefined
+                          ? `Best · ${best} ${best === 1 ? 'turn' : 'turns'}`
+                          : null,
+                      ]
+                        .filter(Boolean)
+                        .join(' · ') || puzzle.description}
                     </Text>
                   </View>
                   <Feather name="chevron-right" size={18} color={colors.mutedForeground} />
