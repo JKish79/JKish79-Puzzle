@@ -4,6 +4,7 @@ import { useSafeAreaInsets } from 'react-native-safe-area-context';
 import Svg, { Circle, Line } from 'react-native-svg';
 import React, { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import {
+  AppState,
   ActivityIndicator,
   Dimensions,
   Platform,
@@ -23,6 +24,7 @@ import {
   Puzzle,
   connectorsFor,
   createBoard,
+  getDailyPuzzle,
   getNextHintCell,
   rotateBoardTile,
   traceCurrent,
@@ -30,6 +32,8 @@ import {
 import {
   EMPTY_PROGRESS,
   GameProgress,
+  getDailyStreak,
+  getLocalDateKey,
   readProgress,
   writeProgress,
 } from '@/lib/progress';
@@ -183,6 +187,8 @@ export default function TideglassScreen() {
   const [mode, setMode] = useState<ScreenMode>('home');
   const [loadState, setLoadState] = useState<LoadState>('loading');
   const [progress, setProgress] = useState<GameProgress>(EMPTY_PROGRESS);
+  const [todayKey, setTodayKey] = useState(() => getLocalDateKey());
+  const [activeDailyDate, setActiveDailyDate] = useState<string | null>(null);
   const [activeId, setActiveId] = useState(PUZZLES[0].id);
   const [board, setBoard] = useState<Board>(() => createBoard(PUZZLES[0]));
   const [moves, setMoves] = useState(0);
@@ -192,13 +198,34 @@ export default function TideglassScreen() {
 
   const activePuzzle =
     PUZZLES.find((puzzle) => puzzle.id === activeId) ?? PUZZLES[0];
+  const dailyPuzzle = useMemo(() => getDailyPuzzle(todayKey), [todayKey]);
   const flow = useMemo(() => traceCurrent(board, activePuzzle), [board, activePuzzle]);
   const boardSize = Math.min(Dimensions.get('window').width - 40, 370);
   const cellSize = Math.floor((boardSize - 28 - 32) / BOARD_SIZE);
+  const dailyStreak = getDailyStreak(progress.dailyCompletedDates, todayKey);
+  const dailyCompletedToday = progress.dailyCompletedDates.includes(todayKey);
   const completedCount = progress.completed.filter((id) =>
     PUZZLES.some((puzzle) => puzzle.id === id),
   ).length;
   const isComplete = progress.completed.length >= PUZZLES.length;
+
+  const refreshToday = useCallback(() => {
+    const currentDateKey = getLocalDateKey();
+    setTodayKey((storedDateKey) =>
+      storedDateKey === currentDateKey ? storedDateKey : currentDateKey,
+    );
+  }, []);
+
+  useEffect(() => {
+    const appStateSubscription = AppState.addEventListener('change', (state) => {
+      if (state === 'active') refreshToday();
+    });
+    const dayRefreshInterval = setInterval(refreshToday, 60_000);
+    return () => {
+      appStateSubscription.remove();
+      clearInterval(dayRefreshInterval);
+    };
+  }, [refreshToday]);
 
   const loadSavedProgress = useCallback(async () => {
     setLoadState('loading');
@@ -220,8 +247,9 @@ export default function TideglassScreen() {
     void loadSavedProgress();
   }, [loadSavedProgress]);
 
-  const startPuzzle = (puzzle: Puzzle) => {
+  const startPuzzle = (puzzle: Puzzle, dailyDate?: string) => {
     hasWon.current = false;
+    setActiveDailyDate(dailyDate ?? null);
     setActiveId(puzzle.id);
     setBoard(createBoard(puzzle));
     setMoves(0);
@@ -250,6 +278,11 @@ export default function TideglassScreen() {
               ? finalMoves
               : Math.min(previousBest, finalMoves),
         },
+        dailyCompletedDates:
+          activeDailyDate &&
+          !progress.dailyCompletedDates.includes(activeDailyDate)
+            ? [...progress.dailyCompletedDates, activeDailyDate]
+            : progress.dailyCompletedDates,
       };
       setProgress(updated);
       setSaveNotice('');
@@ -259,7 +292,7 @@ export default function TideglassScreen() {
         setSaveNotice('This win is shown here, but could not be saved on this device.');
       }
     },
-    [activePuzzle.id, progress],
+    [activeDailyDate, activePuzzle.id, progress],
   );
 
   const turnTile = (row: number, column: number) => {
@@ -377,9 +410,54 @@ export default function TideglassScreen() {
           </View>
 
           <Pressable
+            testID="daily-challenge"
+            accessibilityRole="button"
+            accessibilityLabel={`Daily current, ${dailyPuzzle.title}, ${dailyStreak} day streak${dailyCompletedToday ? ', completed today' : ''}`}
+            style={({ pressed }) => [styles.dailyCard, pressed && styles.pressed]}
+            onPress={() => startPuzzle(dailyPuzzle, todayKey)}
+          >
+            <View style={styles.dailyCardTop}>
+              <View style={styles.dailyLabelGroup}>
+                <Feather name="droplet" size={14} color={colors.primary} />
+                <Text style={styles.dailyEyebrow}>DAILY CURRENT</Text>
+              </View>
+              <View style={styles.streakPill}>
+                <Feather name="zap" size={12} color={colors.accent} />
+                <Text style={styles.streakPillText}>
+                  {dailyStreak > 0
+                    ? `${dailyStreak} DAY STREAK`
+                    : 'START A STREAK'}
+                </Text>
+              </View>
+            </View>
+            <Text style={styles.dailyDate}>{formatDateLabel(todayKey)}</Text>
+            <View style={styles.dailyCardBottom}>
+              <View style={styles.dailyCopy}>
+                <Text style={styles.dailyTitle}>{dailyPuzzle.title}</Text>
+                <Text style={styles.dailySubtitle}>
+                  {dailyCompletedToday
+                    ? 'Completed today · play again anytime'
+                    : dailyPuzzle.description}
+                </Text>
+              </View>
+              <View style={styles.dailyAction}>
+                <Feather
+                  name={dailyCompletedToday ? 'check' : 'arrow-up-right'}
+                  size={19}
+                  color={colors.primaryForeground}
+                />
+              </View>
+            </View>
+          </Pressable>
+
+          <Pressable
             testID="play-today"
             accessibilityRole="button"
-            style={({ pressed }) => [styles.playCard, pressed && styles.pressed]}
+            style={({ pressed }) => [
+              styles.playCard,
+              styles.nextMapCard,
+              pressed && styles.pressed,
+            ]}
             onPress={() => startPuzzle(activePuzzle)}
           >
             <View style={styles.playCardCopy}>
@@ -456,7 +534,11 @@ export default function TideglassScreen() {
               onPress={() => setMode('home')}
             />
             <View style={styles.gameTitleWrap}>
-              <Text style={styles.gameKicker}>MAP {String(PUZZLES.indexOf(activePuzzle) + 1).padStart(2, '0')}</Text>
+              <Text style={styles.gameKicker}>
+                {activeDailyDate
+                  ? 'DAILY CURRENT'
+                  : `MAP ${String(PUZZLES.indexOf(activePuzzle) + 1).padStart(2, '0')}`}
+              </Text>
               <Text style={styles.gameTitle}>{activePuzzle.title}</Text>
             </View>
             <View style={styles.turnBadge}>
@@ -559,6 +641,17 @@ export default function TideglassScreen() {
       )}
     </View>
   );
+}
+
+function formatDateLabel(dateKey: string): string {
+  const [year, month, day] = dateKey.split('-').map(Number);
+  return new Date(year, month - 1, day)
+    .toLocaleDateString(undefined, {
+      weekday: 'long',
+      month: 'long',
+      day: 'numeric',
+    })
+    .toUpperCase();
 }
 
 function makeStyles(colors: ReturnType<typeof useColors>) {
@@ -669,6 +762,64 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
       maxWidth: 290,
       marginTop: 10,
     },
+    dailyCard: {
+      padding: 18,
+      borderRadius: 22,
+      backgroundColor: colors.card,
+      borderWidth: 1,
+      borderColor: colors.border,
+    },
+    dailyCardTop: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dailyLabelGroup: { flexDirection: 'row', alignItems: 'center', gap: 7 },
+    dailyEyebrow: {
+      color: colors.primary,
+      fontSize: 9,
+      fontWeight: '700',
+      letterSpacing: 1.5,
+    },
+    streakPill: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      gap: 5,
+      paddingHorizontal: 9,
+      paddingVertical: 7,
+      borderRadius: 14,
+      backgroundColor: colors.secondary,
+    },
+    streakPillText: {
+      color: colors.foreground,
+      fontSize: 8,
+      fontWeight: '700',
+      letterSpacing: 0.5,
+    },
+    dailyDate: {
+      color: colors.mutedForeground,
+      fontSize: 8,
+      fontWeight: '600',
+      letterSpacing: 1.1,
+      marginTop: 13,
+      marginBottom: 7,
+    },
+    dailyCardBottom: {
+      flexDirection: 'row',
+      alignItems: 'center',
+      justifyContent: 'space-between',
+    },
+    dailyCopy: { flex: 1, paddingRight: 12 },
+    dailyTitle: { color: colors.foreground, fontSize: 21, fontWeight: '700' },
+    dailySubtitle: { color: colors.mutedForeground, fontSize: 11, marginTop: 4 },
+    dailyAction: {
+      width: 40,
+      height: 40,
+      alignItems: 'center',
+      justifyContent: 'center',
+      borderRadius: 14,
+      backgroundColor: colors.primary,
+    },
     playCard: {
       minHeight: 104,
       flexDirection: 'row',
@@ -680,6 +831,7 @@ function makeStyles(colors: ReturnType<typeof useColors>) {
       borderWidth: 1,
       borderColor: colors.border,
     },
+    nextMapCard: { marginTop: 10 },
     playCardCopy: { flex: 1, paddingRight: 10 },
     cardEyebrow: {
       color: colors.primary,

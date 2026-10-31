@@ -239,6 +239,19 @@ export const PUZZLES: Puzzle[] = [
   },
 ];
 
+export function getDailyPuzzle(dateKey: string): Puzzle {
+  if (!/^\d{4}-\d{2}-\d{2}$/.test(dateKey)) {
+    throw new Error('A daily puzzle requires a date in YYYY-MM-DD format.');
+  }
+
+  let hash = 2166136261;
+  for (let index = 0; index < dateKey.length; index += 1) {
+    hash = Math.imul(hash ^ dateKey.charCodeAt(index), 16777619);
+  }
+
+  return PUZZLES[(hash >>> 0) % PUZZLES.length];
+}
+
 const DIRECTIONS: Direction[] = ['N', 'E', 'S', 'W'];
 const DELTAS: Record<Direction, CellCoord> = {
   N: [-1, 0],
