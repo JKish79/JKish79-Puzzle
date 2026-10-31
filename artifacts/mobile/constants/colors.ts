@@ -36,6 +36,7 @@ const colors = {
     emptyCell: '#0E2B31',
     pipe: '#527A78',
     success: '#A9E28C',
+    moonlit: '#B8A5F2',
   },
   dark: {
     text: '#F2F4E9',
@@ -60,6 +61,7 @@ const colors = {
     emptyCell: '#0E2B31',
     pipe: '#527A78',
     success: '#A9E28C',
+    moonlit: '#B8A5F2',
   },
   radius: 8,
 };
